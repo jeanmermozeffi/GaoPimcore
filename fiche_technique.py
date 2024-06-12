@@ -22,7 +22,8 @@ async def process_data(waiting_time):
             print(f"Current IP: {vpn.current_ip}")
 
         print(f"Début du traitement à {datetime.now().strftime('%H:%M:%S')}")
-        technique_search.get_driver()
+        technique_search.start_driver()
+
         technique_search.process_fiche_technique_file_links()
 
         if technique_search.is_captcha_detected:

@@ -14,6 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import WebDriverException
 
 import pandas as pd
 from pandas.errors import EmptyDataError
@@ -78,13 +79,14 @@ class Largus:
 
         dataframes = []
 
-        # Parcourir tous les fichiers dans le dossier
-        for filename in os.listdir(folder_path):
-            if filename.endswith('.csv'):
-                file_path = os.path.join(folder_path, filename)
-                # Lire le fichier CSV et l'ajouter à la liste des DataFrames
-                _df = pd.read_csv(file_path)
-                dataframes.append(_df)
+        # Parcourir tous les fichiers dans le dossier et les sous-dossiers
+        for root, dirs, files in os.walk(folder_path):
+            for filename in files:
+                if filename.endswith('.csv'):
+                    file_path = os.path.join(root, filename)
+                    # Lire le fichier CSV et l'ajouter à la liste des DataFrames
+                    _df = pd.read_csv(file_path)
+                    dataframes.append(_df)
 
         # Concaténer tous les DataFrames en un seul
         final_df = pd.concat(dataframes, ignore_index=True)
@@ -217,16 +219,15 @@ class TechnicalSearch:
         }
 
     def start_driver(self):
+        print('Initializing driver...')
         self.driver = webdriver.Chrome(service=self.service, options=self.options)
 
     def get_driver(self):
         try:
             self.options.binary_location = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
-            # self.options.add_argument('--proxy-server={0}'.format(proxy.proxy))
-            self.options.add_argument('--disable-gpu')
             self.options.add_argument('--window-size=1920,1080')
             self.options.add_argument('--disable-extensions')
-            self.options.add_argument('--remote-debugging-port=9222')
+            # self.options.add_argument('--remote-debugging-port=9222')
             self.options.add_argument('--start-fullscreen')
             self.driver = webdriver.Chrome(service=self.service, options=self.options)
             return self.driver
@@ -339,7 +340,7 @@ class TechnicalSearch:
                 file_name = f"fiches_techniques_{marque.lower()}_{model.lower()}.csv"
                 sanitized_file_name = self.sanitize_filename(file_name)
                 save_path = os.path.join(folder_path, sanitized_file_name)
-                print(f"Sauvegarde du fichier à : {save_path}")
+                # print(f"Sauvegarde du fichier à : {save_path}")
                 df_fiches_technique.to_csv(save_path, index=False)
                 return df_fiches_technique
             else:
@@ -351,16 +352,19 @@ class TechnicalSearch:
 
     def process_fiche_technique_file_links(self, df_path="Data/all_models.csv", column="url"):
         dataframe = pd.read_csv(df_path)
+        print(f"Données à traiter : {dataframe[dataframe['Traiter'] == 0].shape[0]}")
 
-        # Vérifier si la colonne Traiter existe déjà
+        if dataframe[dataframe['Traiter'] == 0].shape[0] == 0:
+            print("Tout le fichier a été traitée !!!")
+            return None
+
         if 'Traiter' not in dataframe.columns:
             dataframe['Traiter'] = 0
 
         filtered_df = dataframe[dataframe['Traiter'] == 1]
         treated_links_length = len(dataframe[dataframe['Traiter'] == 1])
-        # df_no_filtered = dataframe[treated_links_length:][dataframe['Traiter'] == 0]
 
-        treated_links = set(filtered_df[column])  # Un ensemble pour stocker les liens déjà traités
+        treated_links = set(filtered_df[column])
 
         counter = 0
         self.is_captcha_detected = False
@@ -369,44 +373,47 @@ class TechnicalSearch:
             model = row['model']
             make = row['make']
 
-            # Vérifier si le lien a déjà été traité
             if link_url in treated_links:
                 continue
 
-            self.driver.get(link_url)
+            try:
+                self.driver.get(link_url)
 
-            if self.largus.detect_captcha(self.driver):
-                self.is_captcha_detected = True
-                print("La page n'a pas pu être analysée. Il est possible qu'un captcha soit détecté.")
-                break
+                if self.largus.detect_captcha(self.driver):
+                    self.is_captcha_detected = True
+                    print("La page n'a pas pu être analysée. Il est possible qu'un captcha soit détecté.")
+                    break
 
-            if counter == 0:
-                self.largus.click_accept_cookies(self.driver)
+                if counter == 0:
+                    self.largus.click_accept_cookies(self.driver)
 
-            html_content_fiche = self.driver.page_source
-            df_fiches_technique = self.process_all_fiches_techniques(html_content_fiche, model)
+                html_content_fiche = self.driver.page_source
+                df_fiches_technique = self.process_all_fiches_techniques(html_content_fiche, model)
 
-            if df_fiches_technique is None:
-                dataframe.drop(index, inplace=True)
-                dataframe.reset_index(drop=True, inplace=True)
+                if df_fiches_technique is None:
+                    dataframe.drop(index, inplace=True)
+                    dataframe.reset_index(drop=True, inplace=True)
+                    dataframe.to_csv(df_path, index=False)
+                    continue
+
+                dataframe.at[index, 'Traiter'] = 1
+                treated_links.update(link_url)
+
+                counter += 1
+
+                print(f"Waiting for 1 minute before the next URL...{counter}")
+                time.sleep(1)
+
+                save_file_path = f"Models/{make}.csv"
+                save_file_path = unidecode.unidecode(save_file_path).strip().lower().replace(' ', '_').replace("'", "")
                 dataframe.to_csv(df_path, index=False)
+                if counter >= 25:
+                    print(f"Arrêt après {counter} itérations.")
+                    print(f"Données traitées et sauvegardées à {datetime.now().strftime('%H:%M:%S')}")
+                    break
+            except WebDriverException as e:
+                print(f"Erreur lors de l'accès à {link_url}: {e}")
                 continue
-
-            dataframe.at[index, 'Traiter'] = 1
-            treated_links.update(link_url)
-
-            counter += 1
-
-            print(f"Waiting for 1 minute before the next URL...{counter}")
-            time.sleep(1)
-
-            save_file_path = f"Models/{make}.csv"
-            save_file_path = unidecode.unidecode(save_file_path).strip().lower().replace(' ', '_').replace("'", "")
-            dataframe.to_csv(df_path, index=False)
-            if counter >= 25:
-                print(f"Arrêt après {counter} itérations.")
-                print(f"Données traitées et sauvegardées à {datetime.now().strftime('%H:%M:%S')}")
-                break
 
         if self.is_captcha_detected is not True:
             print(f"Arrêt toutes les liens, un total de {counter} liens ont été traitées !.")
@@ -432,6 +439,129 @@ class TechnicalSearch:
         df_save.to_csv(df_folder_path, index=False)
 
         return df_save
+ 
+    
+class DataVersion:
+    def __init__(self):
+        self.largus = Largus()
+
+    def extract_version_data(self, driver, url_version, html_content, df_rows):
+        """
+        Extract version data from a given URL and HTML content using Selenium and BeautifulSoup.
+
+        Parameters:
+        driver (WebDriver): The Selenium WebDriver instance.
+        url_version (str): The URL containing the version information.
+        html_content (str): The HTML content of the page.
+
+        Returns:
+        list: A list of lists containing version data.
+        str: The filename for the CSV file.
+        """
+        # Extraire l'année de l'URL à l'aide d'une expression régulière
+        match = re.search(r'/(\d{4})\.html', url_version)
+        if match:
+            year = match.group(1)
+        else:
+            year = datetime.now().year
+
+        # Localiser la table
+        table = driver.find_element(By.ID, 'listeVersions')
+
+        if table is not None:
+            # Extraire les lignes de la table
+            rows = table.find_elements(By.TAG_NAME, 'tr')
+
+            # Préparer une liste pour stocker les données
+            data_versions = []
+            mark = df_rows['Marque']
+            model = df_rows['Model']
+
+            # Boucler à travers les lignes pour extraire les données
+            for row in rows[1:]:  # Ignorer l'en-tête
+                cols = row.find_elements(By.TAG_NAME, 'td')
+                if cols:
+                    version = cols[0].text
+                    version_link = cols[0].find_element(By.TAG_NAME, 'a').get_attribute('href')
+                    carrosserie = cols[1].text
+                    energy = cols[2].text
+                    boite = cols[3].text
+                    puissance_fiscale = cols[4].text
+                    data_versions.append([version, carrosserie, energy, boite, puissance_fiscale, version_link, year, mark, model])
+
+            # Déterminer le nom du fichier CSV
+            if data_versions:
+                soup = BeautifulSoup(html_content, "html.parser")
+                title_tag = soup.find('h1', class_='title lvl1-title')
+                if title_tag:
+                    title_text = title_tag.text.strip().lower()
+                    title_text = re.sub(r'\s+', '_', title_text)  # Remplacer les espaces par des underscores
+                    csv_filename = f'{normalize_label(title_text)}.csv'
+                else:
+                    csv_filename = f'fiches_techniques_{year}.csv'
+
+                # Créer un DataFrame Pandas à partir des données
+                df_versions = pd.DataFrame(data_versions, columns=['Version', 'Carrosserie', 'Energie', 'Boîte', 'Puissance Fiscale', 'Url', 'Année', 'Marque', 'Modele'])
+                folder_path = f"Versions/{mark}/{model}"
+
+                if not os.path.exists(folder_path):
+                    os.makedirs(folder_path)
+
+                save_path = os.path.join(folder_path, csv_filename)
+
+                df_versions.to_csv(save_path, index=False)
+
+            return data_versions
+
+    def process_versions_links(self, driver, column_link='Lien'):
+        df_path = "Data/Fiches Techniques/fiches_techniques_final.csv"
+        dataframe = pd.read_csv(df_path)
+
+        # Vérifier si la colonne Traiter existe déjà
+        if 'Traiter' not in dataframe.columns:
+            dataframe['Traiter'] = 0
+
+        filtered_df = dataframe[dataframe['Traiter'] == 1]
+        treated_links = set(filtered_df[column_link])  # Un ensemble pour stocker les liens déjà traités
+
+        counter = 0
+        captcha = 0
+        for index, row in dataframe[len(treated_links):].iterrows():
+            link_url = row[column_link]
+
+            # Vérifier si le lien a déjà été traité
+            if link_url in treated_links:
+                continue
+
+            if link_url not in treated_links:
+                driver.get(link_url)
+                time.sleep(1)
+                html_content = driver.page_source
+                data_versions = self.extract_version_data(driver, link_url, html_content, row)
+
+                if data_versions is None:
+                    captcha += 1
+                    continue
+
+                dataframe.at[index, 'Traiter'] = 1
+                treated_links.update(link_url)
+                save_file_path = "Fiches Techniques/fiches_techniques_final.csv"
+                dataframe.to_csv(save_file_path, index=False)
+
+                counter += 1
+
+                print(f"Waiting for 1 minute before the next URL...{counter}")
+                time.sleep(1)
+
+            if captcha >= 2:
+                print("Detection de captcha")
+                break
+
+            if counter >= 50:
+                print("Arrêt après 50 itérations.")
+                break
+
+        print(f"Arrêt toutes les liens, un total de {counter} liens ont été traitées !.")
 
 
 class TechnicalDataSearch:
