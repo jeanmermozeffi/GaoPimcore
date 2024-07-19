@@ -3,12 +3,11 @@ import time
 import asyncio
 import nest_asyncio
 
-from modules.largus import Largus, TechnicalDataSearch, TechnicalSearch
+from modules.largus import Largus, TechnicalSearch, DataVersion, TechnicalDataSearch
 from modules.mullvadvpn import MullVadVPN
 
 largus = Largus()
-technique_search = TechnicalSearch()
-technical_data_search = TechnicalDataSearch()
+process_version = DataVersion()
 vpn = MullVadVPN()
 
 
@@ -22,17 +21,18 @@ async def process_data(waiting_time):
             print(f"Current IP: {vpn.current_ip}")
 
         print(f"Début du traitement à {datetime.now().strftime('%H:%M:%S')}")
-        technique_search.start_driver()
+        process_version.get_driver()
 
-        technique_search.process_fiche_technique_file_links()
+        process_version.process_versions_links()
 
-        if technique_search.is_captcha_detected:
-            technique_search.close_driver()
+        if process_version.is_captcha_detected:
+            process_version.close_driver()
             continue
 
-        technique_search.close_driver()
+        process_version.close_driver()
 
-        print(f"En attente de {waiting_time} minutes avant la prochaine exécution.")
+        next_execution_time = largus.get_next_execution_time(waiting_time)
+        print(f"En attente de {waiting_time} minutes avant la prochaine exécution à : {next_execution_time.strftime('%Y-%m-%d %H:%M:%S')}.")
         await asyncio.sleep(waiting_time * 60)
 
 
@@ -41,12 +41,12 @@ async def run(duration, frequency):
     while time.time() < start_time + 60 * duration:
         await process_data(frequency)
 
-    if technical_data_search.is_captcha_detected is not True:
+    if process_version.is_captcha_detected is not True:
         print(f"Les {duration} minutes sont écoulées à {datetime.now().strftime('%H:%M:%S')}.")
 
 
 async def main():
-    await run(duration=60, frequency=5)
+    await run(duration=30, frequency=5)
 
 
 if __name__ == "__main__":

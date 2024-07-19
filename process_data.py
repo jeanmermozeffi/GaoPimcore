@@ -6,7 +6,7 @@ import nest_asyncio
 
 async def process_data(waiting_time):
     folder = "Versions/Bmw_/Bmw_.csv"
-    save_file_path = "Fiches Technical Details/fiches_technical_details.csv"
+    save_file_path = "Fiches Technical Details/fiches_technical_details_bmw.csv"
 
     async with True:
         start = time.time()

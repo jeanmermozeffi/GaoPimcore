@@ -2,7 +2,7 @@ import requests
 import os
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import unidecode
 import uuid
 
@@ -23,7 +23,48 @@ import numpy as np
 
 class Largus:
     def __init__(self):
-        pass
+        self.driver = None
+        self.service = Service()
+        self.options = Options()
+        self.base_url = 'https://www.largus.fr'
+        self.is_captcha_detected = False
+
+        # Définir les en-têtes
+        self.headers_chrome = headers_chrome_mac = {
+            'accept': 'application/json, text/plain, */*',
+            'accept-language': 'fr-FR,fr;q=0.6',
+            'content-type': 'application/json',
+            'sec-ch-ua': '"Not_A Brand";v="99", "Google Chrome";v="99", "Chromium";v="99"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Mac OS X"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'sec-gpc': '1',
+            'referrer': 'https://www.largus.fr',
+            'referrerPolicy': 'strict-origin-when-cross-origin',
+        }
+
+    def start_driver(self):
+        print('Initializing driver...')
+        self.driver = webdriver.Chrome(service=self.service, options=self.options)
+
+    def get_driver(self):
+        try:
+            print('Initializing driver...')
+            self.options.binary_location = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
+            self.options.add_argument('--window-size=1920,1080')
+            self.options.add_argument('--disable-extensions')
+            # self.options.add_argument('--remote-debugging-port=9222')
+            self.options.add_argument('--start-fullscreen')
+            self.driver = webdriver.Chrome(service=self.service, options=self.options)
+            return self.driver
+        except Exception as e:
+            print(f"Erreur lors de la création du driver: {e}")
+            return None, None
+
+    def close_driver(self):
+        self.driver.quit()
 
     @staticmethod
     def click_accept_cookies(driver):
@@ -43,17 +84,31 @@ class Largus:
 
     @staticmethod
     def detect_captcha(driver):
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        iframe = soup.find('iframe')
-        if iframe is not None:
-            # Obtenir la valeur de l'attribut src de l'iframe
-            src = iframe.get('src')
-            if src is not None:
-                # Vérifier si l'attribut src commence par le lien spécifique du captcha
-                if src.startswith('https://geo.captcha-delivery.com/captcha/?initialCid='):
-                    return True
-        # Retourner False si aucun iframe n'est trouvé ou si l'attribut src ne commence pas par le lien spécifique
-        return False
+        try:
+            # Vérifier si le navigateur est toujours connecté
+            if not driver.service.is_connectable():
+                print("Le navigateur est déconnecté.")
+                return False
+
+            # Obtenir la source de la page
+            page_source = driver.page_source
+            # Utiliser BeautifulSoup pour analyser le HTML
+            soup = BeautifulSoup(page_source, 'html.parser')
+
+            iframe = soup.find('iframe')
+            if iframe is not None:
+                # Obtenir la valeur de l'attribut src de l'iframe
+                src = iframe.get('src')
+                if src is not None:
+                    # Vérifier si l'attribut src commence par le lien spécifique du captcha
+                    if src.startswith('https://geo.captcha-delivery.com/captcha/?initialCid='):
+                        return True
+
+            # Retourner False si aucun iframe n'est trouvé ou si l'attribut src ne commence pas par le lien spécifique
+            return False
+        except WebDriverException as e:
+            print(f"Erreur lors de la détection du captcha")
+            return True
 
     @staticmethod
     def download_image(url, folder_path):
@@ -64,6 +119,12 @@ class Largus:
             print(f"Image téléchargée avec succès: {folder_path}")
         else:
             print(f"Échec du téléchargement de l'image depuis l'URL: {url}")
+
+    @staticmethod
+    def get_next_execution_time(interval_minutes=5):
+        now = datetime.now()
+        next_execution = now + timedelta(minutes=interval_minutes)
+        return next_execution
 
     @staticmethod
     def load_and_concatenate_csvs(folder_path):
@@ -84,13 +145,23 @@ class Largus:
             for filename in files:
                 if filename.endswith('.csv'):
                     file_path = os.path.join(root, filename)
+                    print(f"Found CSV file: {file_path}")  # Ajout d'une impression pour le débogage
                     # Lire le fichier CSV et l'ajouter à la liste des DataFrames
                     _df = pd.read_csv(file_path)
                     dataframes.append(_df)
 
+        # Vérifier si la liste des DataFrames est vide
+        if not dataframes:
+            raise ValueError("No CSV files found in the specified folder.")
+
         # Concaténer tous les DataFrames en un seul
         final_df = pd.concat(dataframes, ignore_index=True)
+
         return final_df
+
+    @staticmethod
+    def normalize_label(label):
+        return unidecode.unidecode(label).strip().replace(' ', '_').replace("'", "")
 
     @staticmethod
     def get_driver():
@@ -363,12 +434,11 @@ class TechnicalSearch:
 
         filtered_df = dataframe[dataframe['Traiter'] == 1]
         treated_links_length = len(dataframe[dataframe['Traiter'] == 1])
-
         treated_links = set(filtered_df[column])
-
         counter = 0
-        self.is_captcha_detected = False
+
         for index, row in dataframe[treated_links_length:].iterrows():
+            self.is_captcha_detected = False
             link_url = row[column]
             model = row['model']
             make = row['make']
@@ -439,13 +509,43 @@ class TechnicalSearch:
         df_save.to_csv(df_folder_path, index=False)
 
         return df_save
- 
-    
+
+
 class DataVersion:
     def __init__(self):
+        self.driver = None
+        self.service = Service()
+        self.options = Options()
         self.largus = Largus()
+        self.is_captcha_detected = False
 
-    def extract_version_data(self, driver, url_version, html_content, df_rows):
+    def start_driver(self):
+        print('Initializing driver...')
+        self.driver = webdriver.Chrome(service=self.service, options=self.options)
+
+    def get_driver(self):
+        try:
+            print('Initializing driver...')
+            self.options.binary_location = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
+            # self.options.binary_location = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+
+            self.options.add_argument("--disable-infobars")
+            self.options.add_argument('--start-fullscreen')
+            self.options.add_argument("--start-maximized")
+            self.driver = webdriver.Chrome(service=self.service, options=self.options)
+            return self.driver
+        except Exception as e:
+            print(f"Erreur lors de la création du driver: {e}")
+            return None, None
+
+    def close_driver(self):
+        self.driver.quit()
+
+    @staticmethod
+    def sanitize_filename(filename):
+        return re.sub(r'[\/:*?"<>|]', '_', filename)
+
+    def extract_version_data(self, url_version, html_content, df_rows):
         """
         Extract version data from a given URL and HTML content using Selenium and BeautifulSoup.
 
@@ -466,7 +566,7 @@ class DataVersion:
             year = datetime.now().year
 
         # Localiser la table
-        table = driver.find_element(By.ID, 'listeVersions')
+        table = self.driver.find_element(By.ID, 'listeVersions')
 
         if table is not None:
             # Extraire les lignes de la table
@@ -487,7 +587,8 @@ class DataVersion:
                     energy = cols[2].text
                     boite = cols[3].text
                     puissance_fiscale = cols[4].text
-                    data_versions.append([version, carrosserie, energy, boite, puissance_fiscale, version_link, year, mark, model])
+                    data_versions.append(
+                        [version, carrosserie, energy, boite, puissance_fiscale, version_link, year, mark, model])
 
             # Déterminer le nom du fichier CSV
             if data_versions:
@@ -496,24 +597,29 @@ class DataVersion:
                 if title_tag:
                     title_text = title_tag.text.strip().lower()
                     title_text = re.sub(r'\s+', '_', title_text)  # Remplacer les espaces par des underscores
-                    csv_filename = f'{normalize_label(title_text)}.csv'
+                    csv_filename = f'{self.largus.normalize_label(title_text)}.csv'
                 else:
                     csv_filename = f'fiches_techniques_{year}.csv'
 
                 # Créer un DataFrame Pandas à partir des données
-                df_versions = pd.DataFrame(data_versions, columns=['Version', 'Carrosserie', 'Energie', 'Boîte', 'Puissance Fiscale', 'Url', 'Année', 'Marque', 'Modele'])
-                folder_path = f"Versions/{mark}/{model}"
+                df_versions = pd.DataFrame(data_versions,
+                                           columns=['Version', 'Carrosserie', 'Energie', 'Boîte', 'Puissance Fiscale',
+                                                    'Url', 'Annee', 'Marque', 'Modele'])
+                folder_path = f"Data/Versions/{self.sanitize_filename(mark.capitalize())}/{self.sanitize_filename(model.capitalize())}"
 
                 if not os.path.exists(folder_path):
                     os.makedirs(folder_path)
+                    # print(f"Création d'un nouveau dossier: {folder_path}")
 
-                save_path = os.path.join(folder_path, csv_filename)
+                save_path = os.path.join(folder_path, self.sanitize_filename(csv_filename))
 
                 df_versions.to_csv(save_path, index=False)
 
             return data_versions
 
-    def process_versions_links(self, driver, column_link='Lien'):
+        return None
+
+    def process_versions_links(self, column_link='Lien'):
         df_path = "Data/Fiches Techniques/fiches_techniques_final.csv"
         dataframe = pd.read_csv(df_path)
 
@@ -521,47 +627,66 @@ class DataVersion:
         if 'Traiter' not in dataframe.columns:
             dataframe['Traiter'] = 0
 
+        if dataframe[dataframe['Traiter'] == 0].shape[0] == 0:
+            print("Tout le fichier a été traitée !!!")
+            return None
+
+        print(f"Données à traiter : {dataframe[dataframe['Traiter'] == 0].shape[0]}")
+
         filtered_df = dataframe[dataframe['Traiter'] == 1]
         treated_links = set(filtered_df[column_link])  # Un ensemble pour stocker les liens déjà traités
-
+        self.is_captcha_detected = False
         counter = 0
-        captcha = 0
-        for index, row in dataframe[len(treated_links):].iterrows():
+        access_error = 0
+
+        for index, row in dataframe[dataframe['Traiter'] == 0].iterrows():
+            self.is_captcha_detected = False
+            if access_error == 5:
+                break
+
             link_url = row[column_link]
 
             # Vérifier si le lien a déjà été traité
             if link_url in treated_links:
                 continue
 
-            if link_url not in treated_links:
-                driver.get(link_url)
+            if self.largus.detect_captcha(self.driver):
+                self.is_captcha_detected = True
+                print("La page n'a pas pu être analysée. Il est possible qu'un captcha soit détecté.")
+                break
+
+            try:
+                self.driver.get(link_url)
                 time.sleep(1)
-                html_content = driver.page_source
-                data_versions = self.extract_version_data(driver, link_url, html_content, row)
+
+                if counter == 0:
+                    self.largus.click_accept_cookies(self.driver)
+
+                html_content = self.driver.page_source
+                data_versions = self.extract_version_data(link_url, html_content, row)
 
                 if data_versions is None:
-                    captcha += 1
                     continue
 
                 dataframe.at[index, 'Traiter'] = 1
                 treated_links.update(link_url)
-                save_file_path = "Fiches Techniques/fiches_techniques_final.csv"
-                dataframe.to_csv(save_file_path, index=False)
+                dataframe.to_csv(df_path, index=False)
 
                 counter += 1
 
                 print(f"Waiting for 1 minute before the next URL...{counter}")
                 time.sleep(1)
-
-            if captcha >= 2:
-                print("Detection de captcha")
-                break
+            except WebDriverException as e:
+                print(f"Erreur lors de l'accès à {link_url}")
+                access_error += 1
+                continue
 
             if counter >= 50:
-                print("Arrêt après 50 itérations.")
+                print(f"Arrêt après {counter} itérations.")
                 break
 
-        print(f"Arrêt toutes les liens, un total de {counter} liens ont été traitées !.")
+        if self.is_captcha_detected is False:
+            print(f"Arrêt toutes les liens, un total de {counter} liens ont été traitées !.")
 
 
 class TechnicalDataSearch:
@@ -573,6 +698,7 @@ class TechnicalDataSearch:
         self.base_url = 'https://www.largus.fr'
         self.largus = Largus()
         self.is_captcha_detected = False
+        self.captcha_abus = False
 
         # Définir les en-têtes
         self.headers_chrome = headers_chrome_mac = {
@@ -657,10 +783,6 @@ class TechnicalDataSearch:
 
         return [vehicle, price, date]
 
-    @staticmethod
-    def normalize_label(label):
-        return unidecode.unidecode(label).strip().replace(' ', '_').replace("'", "")
-
     def extract_vehicle_resume(self, soup):
         resume_div = soup.find('div', id='resume')
 
@@ -677,7 +799,7 @@ class TechnicalDataSearch:
             else:
                 value = '-'
 
-            details[self.normalize_label(label)] = value
+            details[self.largus.normalize_label(label)] = value
 
         return details
 
@@ -691,7 +813,7 @@ class TechnicalDataSearch:
                     for line_div in dimension_lines:
                         label = line_div.find('span', class_='labelInfo').text.strip().lower().replace(' ', '_')
                         value = ' '.join(line_div.find('span', class_='valeur').text.split())
-                        dimensions[self.normalize_label(label)] = value
+                        dimensions[self.largus.normalize_label(label)] = value
             return dimensions
 
     def extract_weight(self, soup):
@@ -703,7 +825,7 @@ class TechnicalDataSearch:
                 for line in weight_lines:
                     label = line.find('span', class_='labelInfo').text.strip().lower().replace(' ', '_')
                     value = ' '.join(line.find('span', class_='valeur').text.split())
-                    weights[self.normalize_label(label)] = value
+                    weights[self.largus.normalize_label(label)] = value
         return weights
 
     def extract_habitability(self, soup):
@@ -715,7 +837,7 @@ class TechnicalDataSearch:
                 for line in habitability_lines:
                     label = line.find('span', class_='labelInfo').text.strip().lower().replace(' ', '_')
                     value = ' '.join(line.find('span', class_='valeur').text.split())
-                    habitability[self.normalize_label(label)] = value
+                    habitability[self.largus.normalize_label(label)] = value
         return habitability
 
     def extract_tires(self, soup):
@@ -727,7 +849,7 @@ class TechnicalDataSearch:
                 for line in tires_lines:
                     label = line.find('span', class_='labelInfo').text.strip().lower().replace(' ', '_')
                     value = ' '.join(line.find('span', class_='valeur').text.split())
-                    tires[self.normalize_label(label)] = value
+                    tires[self.largus.normalize_label(label)] = value
         return tires
 
     def extract_vehicle_details(self, soup):
@@ -742,7 +864,7 @@ class TechnicalDataSearch:
             for line in engine_lines:
                 label = line.find('span', class_='labelInfo').text
                 value = ' '.join(line.find('span', class_='valeur').text.split())
-                engine_details[self.normalize_label(label)] = value
+                engine_details[self.largus.normalize_label(label)] = value
         return engine_details
 
     def extract_transmission_details(self, soup):
@@ -754,7 +876,7 @@ class TechnicalDataSearch:
             for line in transmission_lines:
                 label = line.find('span', class_='labelInfo').text
                 value = ' '.join(line.find('span', class_='valeur').text.split())
-                transmission_details[self.normalize_label(label)] = value
+                transmission_details[self.largus.normalize_label(label)] = value
         return transmission_details
 
     def extract_technical_details(self, soup):
@@ -766,7 +888,7 @@ class TechnicalDataSearch:
             for line in technical_lines:
                 label = line.find('span', class_='labelInfo').text
                 value = ' '.join(line.find('span', class_='valeur').text.split())
-                technical_details[self.normalize_label(label)] = value
+                technical_details[self.largus.normalize_label(label)] = value
         return technical_details
 
     def extract_vehicle_characteristics(self, soup):
@@ -788,7 +910,7 @@ class TechnicalDataSearch:
                     for info in performance_div.find_all('div', class_='ligneInfo'):
                         label = info.find('span', class_='labelInfo').text.strip()
                         value = info.find('span', class_='valeur').text.strip()
-                        performance_data[self.normalize_label(label)] = value
+                        performance_data[self.largus.normalize_label(label)] = value
                     return performance_data
 
     def extract_consumption(self, soup):
@@ -802,7 +924,7 @@ class TechnicalDataSearch:
                     for info in consumption_div.find_all('div', class_='ligneInfo'):
                         label = info.find('span', class_='labelInfo').text.strip()
                         value = info.find('span', class_='valeur').text.strip()
-                        consumption_data[self.normalize_label(label)] = value
+                        consumption_data[self.largus.normalize_label(label)] = value
                     return consumption_data
         return None
 
@@ -838,17 +960,22 @@ class TechnicalDataSearch:
     def generate_immatriculation():
         return str(uuid.uuid4())
 
-    def process_vehicle_data(self, folder_file_path, column_link='Url'):
+    def process_vehicle_data(self, folder_file_path, column_link='Url', is_view_save=True):
         dataframe = pd.read_csv(folder_file_path)
 
         # Vérifier si la colonne Traiter existe déjà
         if 'Traiter' not in dataframe.columns:
             dataframe['Traiter'] = 0
 
+        if dataframe[dataframe['Traiter'] == 0].shape[0] == 0:
+            print("Tout le fichier a été traitée !!!")
+            return None
+
+        print(f"Données à traiter : {dataframe[dataframe['Traiter'] == 0].shape[0]}")
+
         filtered_df = dataframe[dataframe['Traiter'] == 1]
         treated_links = set(filtered_df[column_link])
 
-        counter = 0
         details = {
             'Marque': [],
             'Modele': [],
@@ -869,8 +996,17 @@ class TechnicalDataSearch:
             'Gallery Images': [],
         }
 
+        counter = 0
         self.is_captcha_detected = False
-        for index, row in dataframe[len(treated_links):].iterrows():
+        access_error = 0
+        captcha = 0
+        self.captcha_abus = False
+
+        for index, row in dataframe[dataframe['Traiter'] == 0].iterrows():
+            self.is_captcha_detected = False
+            if access_error == 5:
+                break
+
             link_url = row[column_link]
 
             # Vérifier si le lien a déjà été traité
@@ -879,59 +1015,71 @@ class TechnicalDataSearch:
 
             model = row['Modele']
             mark = row['Marque']
-            year = row['Année']
+            year = row['Annee']
 
-            self.driver.get(link_url)
-            time.sleep(1)
+            try:
+                self.driver.get(link_url)
+                time.sleep(1)
 
-            if self.largus.detect_captcha(self.driver):
-                self.is_captcha_detected = True
-                print("La page n'a pas pu être analysée. Il est possible qu'un captcha soit détecté.")
-                break
+                if self.largus.detect_captcha(self.driver):
+                    if captcha == 1:
+                        self.captcha_abus = True
 
-            if counter == 0:
-                self.largus.click_accept_cookies(self.driver)
+                    self.is_captcha_detected = True
+                    print("La page n'a pas pu être analysée. Il est possible qu'un captcha soit détecté.")
+                    captcha += 1
+                    break
 
-            page_source = self.driver.page_source
-            soup = BeautifulSoup(page_source, 'html.parser')
+                if counter == 0:
+                    self.largus.click_accept_cookies(self.driver)
 
-            data_header = self.extract_header_data(soup)
-            vehicle_resume = self.extract_vehicle_resume(soup)
-            vehicle_details = self.extract_vehicle_details(soup)
-            vehicle_characteristics = self.extract_vehicle_characteristics(soup)
-            performance_data = self.extract_performance(soup)
-            consumption_data = self.extract_consumption(soup)
-            gallery_images = self.extract_gallery_images(soup)
+                page_source = self.driver.page_source
+                soup = BeautifulSoup(page_source, 'html.parser')
 
-            details['Marque'].append(mark)
-            details['Modele'].append(model)
-            details['Annee'].append(year)
-            details['Vehicule'].append(data_header[0])
-            details['Prix'].append(data_header[1])
-            details['Date Publication'].append(data_header[2])
-            details['Resumer'].append(vehicle_resume)
-            details['Dimensions'].append(vehicle_details[0])
-            details['Weight'].append(vehicle_details[1])
-            details['Habitability'].append(vehicle_details[2])
-            details['Tires'].append(vehicle_details[3])
-            details['Engine'].append(vehicle_characteristics['Engine'])
-            details['Transmission'].append(vehicle_characteristics['Transmission'])
-            details['Technical'].append(vehicle_characteristics['Technical'])
-            details['Performance'].append(performance_data)
-            details['Consumption'].append(consumption_data)
-            details['Gallery Images'].append(gallery_images)
+                data_header = self.extract_header_data(soup)
+                vehicle_resume = self.extract_vehicle_resume(soup)
+                vehicle_details = self.extract_vehicle_details(soup)
+                vehicle_characteristics = self.extract_vehicle_characteristics(soup)
+                performance_data = self.extract_performance(soup)
+                consumption_data = self.extract_consumption(soup)
+                gallery_images = self.extract_gallery_images(soup)
 
-            dataframe.at[index, 'Traiter'] = 1
-            treated_links.update(link_url)
-            counter += 1
+                details['Marque'].append(mark)
+                details['Modele'].append(model)
+                details['Annee'].append(year)
+                details['Vehicule'].append(data_header[0])
+                details['Prix'].append(data_header[1])
+                details['Date Publication'].append(data_header[2])
+                details['Resumer'].append(vehicle_resume)
+                details['Dimensions'].append(vehicle_details[0])
+                details['Weight'].append(vehicle_details[1])
+                details['Habitability'].append(vehicle_details[2])
+                details['Tires'].append(vehicle_details[3])
+                details['Engine'].append(vehicle_characteristics['Engine'])
+                details['Transmission'].append(vehicle_characteristics['Transmission'])
+                details['Technical'].append(vehicle_characteristics['Technical'])
+                details['Performance'].append(performance_data)
+                details['Consumption'].append(consumption_data)
+                details['Gallery Images'].append(gallery_images)
 
-            print(f"Waiting for 1 minute before the next URL...{counter}")
-            time.sleep(1)
+                dataframe.at[index, 'Traiter'] = 1
+                treated_links.update(link_url)
+                counter += 1
 
-            if counter >= 50:
-                break
+                print(f"Waiting for 1 minute before the next URL...{counter}")
+                time.sleep(1)
 
-        dataframe.to_csv(folder_file_path, index=False)
+                if counter >= 2:
+                    print(f"Arrêt après {counter} itérations.")
+                    break
+
+            except WebDriverException as e:
+                print(f"Erreur lors de l'accès à {link_url}")
+                access_error += 1
+                continue
+
+            if is_view_save:
+                dataframe.to_csv(folder_file_path, index=False)
 
         if self.is_captcha_detected is not True:
             print(f"Arrêt après un total de {counter} itérations.")

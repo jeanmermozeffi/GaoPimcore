@@ -12,8 +12,8 @@ vpn = MullVadVPN()
 
 
 async def process_data(waiting_time):
-    folder_file_path = "Data/Versions/Bmw/Bmw.csv"
-    save_file_df = "Data/Fiches Technical Details/fiches_technical_details.csv"
+    folder_file_path = "Data/Old Data/Bmw.csv"
+    save_file_df = "Data/Fiches Technical Details/fiches_technical_details_bmw.csv"
 
     start = time.time()
     end_time = start + waiting_time * 60
