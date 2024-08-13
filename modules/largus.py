@@ -19,6 +19,7 @@ from selenium.common.exceptions import WebDriverException
 import pandas as pd
 from pandas.errors import EmptyDataError
 import numpy as np
+from modules.security.user_agent import interceptor
 
 
 class Largus:
@@ -145,8 +146,7 @@ class Largus:
             for filename in files:
                 if filename.endswith('.csv'):
                     file_path = os.path.join(root, filename)
-                    print(f"Found CSV file: {file_path}")  # Ajout d'une impression pour le débogage
-                    # Lire le fichier CSV et l'ajouter à la liste des DataFrames
+                    print(f"Found CSV file: {file_path}")
                     _df = pd.read_csv(file_path)
                     dataframes.append(_df)
 
@@ -255,7 +255,7 @@ class Largus:
                 counter += 1
 
                 print(f"Waiting for 1 minute before the next URL...{counter}")
-                time.sleep(1)
+                time.sleep(2)
 
             if counter >= 50:
                 print("Arrêt après 50 itérations.")
@@ -351,7 +351,7 @@ class TechnicalSearch:
     def extract_fiches_techniques(self, url, model):
         try:
             self.driver.get(url)
-            time.sleep(1)
+            time.sleep(2)
             response = self.driver.page_source
         except Exception as e:
             print(f"Error fetching URL: {url}. Exception: {e}")
@@ -472,7 +472,7 @@ class TechnicalSearch:
                 counter += 1
 
                 print(f"Waiting for 1 minute before the next URL...{counter}")
-                time.sleep(1)
+                time.sleep(2)
 
                 save_file_path = f"Models/{make}.csv"
                 save_file_path = unidecode.unidecode(save_file_path).strip().lower().replace(' ', '_').replace("'", "")
@@ -657,7 +657,7 @@ class DataVersion:
 
             try:
                 self.driver.get(link_url)
-                time.sleep(1)
+                time.sleep(2)
 
                 if counter == 0:
                     self.largus.click_accept_cookies(self.driver)
@@ -675,7 +675,7 @@ class DataVersion:
                 counter += 1
 
                 print(f"Waiting for 1 minute before the next URL...{counter}")
-                time.sleep(1)
+                time.sleep(2)
             except WebDriverException as e:
                 print(f"Erreur lors de l'accès à {link_url}")
                 access_error += 1
@@ -720,14 +720,18 @@ class TechnicalDataSearch:
         self.driver = webdriver.Chrome(service=self.service, options=self.options)
 
     def get_driver(self):
+        headers = interceptor()
         try:
-            self.options.binary_location = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
-            # self.options.add_argument('--proxy-server={0}'.format(proxy.proxy))
-            self.options.add_argument('--disable-gpu')
-            self.options.add_argument('--window-size=1920,1080')
-            self.options.add_argument('--disable-extensions')
-            self.options.add_argument('--remote-debugging-port=9222')
-            self.options.add_argument('--start-fullscreen')
+            print('Initializing driver...')
+            # self.options.binary_location = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser'
+            self.options.add_argument('--user-agent=%s' % headers)
+            self.options.add_argument("start-maximized")
+            # self.options.add_argument('--disable-gpu')
+            # self.options.add_argument('--window-size=1920,1080')
+            # self.options.add_argument('--remote-debugging-port=9222')
+            # self.options.add_argument('--start-fullscreen')
+            self.options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            self.options.add_experimental_option('useAutomationExtension', False)
             self.driver = webdriver.Chrome(service=self.service, options=self.options)
             return self.driver
         except Exception as e:
@@ -960,7 +964,7 @@ class TechnicalDataSearch:
     def generate_immatriculation():
         return str(uuid.uuid4())
 
-    def process_vehicle_data(self, folder_file_path, column_link='Url', is_view_save=True):
+    def process_vehicle_data(self, folder_file_path, column_link='Url', is_view_save=True, limit_scraper=50):
         dataframe = pd.read_csv(folder_file_path)
 
         # Vérifier si la colonne Traiter existe déjà
@@ -1001,8 +1005,10 @@ class TechnicalDataSearch:
         access_error = 0
         captcha = 0
         self.captcha_abus = False
+        dataframe_index_to_treat = []
 
         for index, row in dataframe[dataframe['Traiter'] == 0].iterrows():
+            self.driver.delete_all_cookies()
             self.is_captcha_detected = False
             if access_error == 5:
                 break
@@ -1019,7 +1025,7 @@ class TechnicalDataSearch:
 
             try:
                 self.driver.get(link_url)
-                time.sleep(1)
+                time.sleep(2)
 
                 if self.largus.detect_captcha(self.driver):
                     if captcha == 1:
@@ -1062,24 +1068,23 @@ class TechnicalDataSearch:
                 details['Consumption'].append(consumption_data)
                 details['Gallery Images'].append(gallery_images)
 
-                dataframe.at[index, 'Traiter'] = 1
+                dataframe_index_to_treat.append(index)
                 treated_links.update(link_url)
                 counter += 1
 
                 print(f"Waiting for 1 minute before the next URL...{counter}")
-                time.sleep(1)
+                time.sleep(2)
 
-                if counter >= 2:
-                    print(f"Arrêt après {counter} itérations.")
+                if (counter == limit_scraper) and is_view_save:
+                    # Mise à jour de la colonne 'Traiter' pour les index déterminés
+                    dataframe.loc[dataframe_index_to_treat, 'Traiter'] = 1
+                    dataframe.to_csv(folder_file_path, index=False)
                     break
 
             except WebDriverException as e:
                 print(f"Erreur lors de l'accès à {link_url}")
                 access_error += 1
                 continue
-
-            if is_view_save:
-                dataframe.to_csv(folder_file_path, index=False)
 
         if self.is_captcha_detected is not True:
             print(f"Arrêt après un total de {counter} itérations.")

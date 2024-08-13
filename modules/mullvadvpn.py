@@ -1,13 +1,13 @@
 import os
 import random
 import time
-
 import requests
 
 
 class MullVadVPN:
     def __init__(self):
         self.url_api = "https://api.mullvad.net/www/relays/all/"
+        self.api_url_valid = "https://am.i.mullvad.net/json"
         self.relays = self.fetch_relays()
         self.current_ip = None
 
@@ -43,7 +43,7 @@ class MullVadVPN:
         self.reconnect_vpn()
 
         try:
-            response = requests.get("https://api.ipify.org?format=json")
+            response = requests.get(self.api_url_valid)
             response.raise_for_status()  # Vérifie les erreurs HTTP
             self.current_ip = response.json()["ip"]
             return response.json()["ip"]
@@ -52,7 +52,7 @@ class MullVadVPN:
             return None
 
     def main(self):
-        for i in range(2):
+        for i in range(1):
             # Se reconnecter à Mullvad pour changer d'IP
             self.get_current_ip()
 
@@ -61,5 +61,6 @@ class MullVadVPN:
 
 
 if __name__ == "__main__":
-    mv = MullVadVPN()
-    mv.main()
+     mullvad = MullVadVPN()
+     mullvad.main()
+
